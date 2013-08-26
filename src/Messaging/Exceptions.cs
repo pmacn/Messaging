@@ -40,6 +40,18 @@ namespace Messaging
     }
 
     [Serializable]
+    public class UnableToStartMessageBusException : Exception
+    {
+        public UnableToStartMessageBusException() { }
+        public UnableToStartMessageBusException(string message) : base(message) { }
+        public UnableToStartMessageBusException(string message, Exception inner) : base(message, inner) { }
+        protected UnableToStartMessageBusException(
+          SerializationInfo info,
+          StreamingContext context)
+            : base(info, context) { }
+    }
+
+    [Serializable]
     public class TargetEndpointNotFoundException : Exception
     {
         public TargetEndpointNotFoundException() { }

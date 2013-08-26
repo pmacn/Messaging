@@ -81,6 +81,7 @@
   <ItemGroup>
     <Compile Include="Exceptions.cs" />
     <Compile Include="MessageBus.cs" />
+    <Compile Include="MessageBusFactory.cs" />
     <Compile Include="ServiceBus.cs" />
     <Compile Include="MsmqMessageBus.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

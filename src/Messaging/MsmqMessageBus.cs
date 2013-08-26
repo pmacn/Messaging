@@ -19,7 +19,9 @@ namespace Messaging
 
         private IMessageFormatter _messageFormatter = new BinaryMessageFormatter();
 
-        public MsmqMessageBus(string localQueue) { LocalEndpoint = new QueueEndpoint("", localQueue); }
+        public MsmqMessageBus(string localQueue)
+            : base(new QueueEndpoint("", localQueue))
+        { }
 
         protected override void SendImpl<TMessage>(TMessage message, QueueEndpoint endpoint)
         {
@@ -33,13 +35,13 @@ namespace Messaging
             }
         }
 
-        public override void Start()
+        protected override void StartImpl()
         {
             SetupLocalQueue();
             StartListening();
         }
 
-        public override void Stop()
+        protected override void StopImpl()
         {
             if (_localQueue == null)
                 return;
@@ -100,16 +102,6 @@ namespace Messaging
             receptionQueue.BeginReceive();
         }
 
-        private void ProcessMessage(Message queueMessage)
-        {
-            var messageBody = queueMessage.Body;
-            if (messageBody == null)
-                throw new Exception(String.Format("Unable to extract message. Label: {0}", queueMessage.Label));
-
-            HandleMessage(messageBody);
-            SendReplies(queueMessage);
-        }
-
         private void PeekCompletedHandler(object sender, PeekCompletedEventArgs e)
         {
             var queue = (MessageQueue)sender;
@@ -118,10 +110,9 @@ namespace Messaging
             {
                 queue.EndPeek(e.AsyncResult);
                 queueMessage = queue.Receive();
-                HandleMessage(queueMessage.Body);
-                SendReplies(queueMessage);
+                ProcessMessage(queueMessage);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 if (queueMessage != null)
                     SendToErrorQueue(queueMessage);
@@ -130,13 +121,14 @@ namespace Messaging
             queue.BeginPeek();
         }
 
-        private void SendToErrorQueue(Message queueMessage)
+        private void ProcessMessage(Message queueMessage)
         {
-            var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
-            using (var mq = GetOrCreateMessageQueue(errorQueuePath))
-            {
-                mq.SendMessage(queueMessage);
-            }
+            var messageBody = queueMessage.Body;
+            if (messageBody == null)
+                throw new Exception(String.Format("Unable to extract message. Label: {0}", queueMessage.Label));
+
+            HandleMessage(messageBody);
+            SendReplies(queueMessage);
         }
 
         private void SendReplies(Message message)
@@ -149,9 +141,23 @@ namespace Messaging
                 message.ResponseQueue.SendMessage(WrapInEnvelope(reply));
         }
 
-        public override void Dispose()
+        private void SendToErrorQueue(Message queueMessage)
         {
-            Stop();
+            var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
+            using (var mq = GetOrCreateMessageQueue(errorQueuePath))
+            {
+                mq.SendMessage(queueMessage);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+
+            if (disposing)
+            {
+                Stop();
+            }
         }
     }
 
@@ -166,7 +172,6 @@ namespace Messaging
                     transaction.Begin();
                     mq.Send(message, transaction);
                     transaction.Commit();
-                    //transaction.Complete();
                 }
             }
             else
@@ -178,7 +183,6 @@ namespace Messaging
 
     internal static class MsmqEndpointParser
     {
-        // This should probably be in the bus instead.
         public static string GetLocalQueuePath(QueueEndpoint endpoint)
         {
             if(IsLocalhost(endpoint.MachineName))

@@ -8,6 +8,7 @@ using System.Text;
 
 namespace Messaging
 {
+    [ContractClass(typeof(MessageBusContract))]
     public interface IMessageBus : IDisposable
     {
         /// <summary>
@@ -16,8 +17,13 @@ namespace Messaging
         QueueEndpoint LocalEndpoint { get; }
 
         /// <summary>
+        /// True if the messagebus is currently listening for messages. Otherwise false.
+        /// </summary>
+        bool IsRunning { get; }
+
+        /// <summary>
         /// Sends a message of type <typeparamref name="TMessage"/> to all
-        /// target endpoints registered for that type
+        /// target endpoints registered for that type of message.
         /// </summary>
         /// <typeparam name="TMessage">Type of message to send</typeparam>
         /// <param name="message">Message to send</param>
@@ -78,16 +84,21 @@ namespace Messaging
 
         protected readonly MessageHandlers _messageHandlers = new MessageHandlers();
 
-        protected readonly ReplyGenerator _replyGenerator = new ReplyGenerator();
+        protected readonly ReplyGenerators _replyGenerator = new ReplyGenerators();
+
+        protected MessageBus(QueueEndpoint localEndpoint)
+        {
+            LocalEndpoint = localEndpoint;
+        }
 
         public QueueEndpoint LocalEndpoint { get; set; }
+
+        public bool IsRunning { get; private set; }
 
         public UnhandledMessagesPolicy UnhandledMessagesPolicy { get; set; }
 
         public void Send<TMessage>(TMessage message)
         {
-            Contract.Requires<ArgumentNullException>(message != null, "message cannot be null");
-
             foreach(var endpoint in _targetEndpoints.For<TMessage>())
                 SendImpl(message, endpoint);
         }
@@ -124,13 +135,38 @@ namespace Messaging
             _replyGenerator.AddFor<TMessage>(replyGenerator);
         }
 
-        public abstract void Start();
+        public void Start()
+        {
+            if (IsRunning)
+                return;
 
-        public abstract void Stop();
+            try
+            {
+                StartImpl();
+                IsRunning = true;
+            }
+            catch (Exception ex)
+            {
+                throw new UnableToStartMessageBusException("Failed to start the message bus", ex);
+            }
+        }
+
+        protected abstract void StartImpl();
+
+        public void Stop()
+        {
+            if(!IsRunning)
+                return;
+
+            StopImpl();
+            IsRunning = false;
+        }
+
+        protected abstract void StopImpl();
 
         protected void HandleMessage(object message)
         {
-            Contract.Requires<ArgumentNullException>(message != null, "message cannot be null");
+            if (ReferenceEquals(message, null)) return;
 
             try
             {
@@ -154,50 +190,63 @@ namespace Messaging
             }
         }
 
-        public abstract void Dispose();
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing) { }
 
         protected class MessageHandlers
         {
-            private readonly ConcurrentDictionary<RuntimeTypeHandle, IList> _handlers =
-                new ConcurrentDictionary<RuntimeTypeHandle, IList>();
+            private readonly List<MessageHandlerDescriptor> _descriptors = new List<MessageHandlerDescriptor>();
 
             public void Add<TMessage>(Action<TMessage> handler)
             {
-                GetHandlersFor<TMessage>()
-                         .Add(handler);
+                var newDescriptor = new MessageHandlerDescriptor(typeof(TMessage), new Action<object>(o => handler((TMessage)o)));
+                if(!_descriptors.Contains(newDescriptor))
+                    _descriptors.Add(newDescriptor);
             }
 
-            public IEnumerable<Action<TMessage>> For<TMessage>()
+            public IEnumerable<Action<object>> For<TMessage>()
             {
-                return GetHandlersFor<TMessage>().ToList();
+                var messageType = typeof(TMessage);
+
+                return _descriptors.Where(d => d.MessageType.IsAssignableFrom(messageType))
+                                   .Select(d => d.MessageHandler);
             }
 
             public void Remove<TMessage>(Action<TMessage> handler)
             {
-                GetHandlersFor<TMessage>().Remove(handler);
-            }
-
-            private List<Action<TMessage>> GetHandlersFor<TMessage>()
-            {
-                return (List<Action<TMessage>>)_handlers.GetOrAdd(typeof(TMessage).TypeHandle, new List<Action<TMessage>>());
+                _descriptors.RemoveAll(d => d.MessageType == typeof(TMessage) && (d.MessageHandler as Action<TMessage>) == handler);
             }
         }
 
         protected class TargetEndpoints
         {
-            private readonly ConcurrentDictionary<RuntimeTypeHandle, List<QueueEndpoint>> _endpoints =
-                new ConcurrentDictionary<RuntimeTypeHandle, List<QueueEndpoint>>();
+            private readonly List<TargetEndpointDescriptor> _descriptors = new List<TargetEndpointDescriptor>();
 
-            public IEnumerable<QueueEndpoint> For<TMessage>() { return EndpointsFor<TMessage>().ToList(); }
+            public IEnumerable<QueueEndpoint> For<TMessage>()
+            {
+                return _descriptors.Where(d => d.MessageType.IsAssignableFrom(typeof(TMessage))).Select(d => d.Endpoint);
+            }
 
-            public void AddFor<TMessage>(QueueEndpoint endpoint) { EndpointsFor<TMessage>().Add(endpoint); }
+            public void AddFor<TMessage>(QueueEndpoint endpoint)
+            {
+                var newDescriptor = new TargetEndpointDescriptor(typeof(TMessage), endpoint);
+                if (!_descriptors.Contains(newDescriptor))
+                    _descriptors.Add(newDescriptor);
+            }
 
-            public void RemoveFor<TMessage>(QueueEndpoint endpoint) { EndpointsFor<TMessage>().Remove(endpoint); }
-
-            private List<QueueEndpoint> EndpointsFor<TMessage>() { return _endpoints.GetOrAdd(typeof(TMessage).TypeHandle, new List<QueueEndpoint>()); }
+            public void RemoveFor<TMessage>(QueueEndpoint endpoint)
+            {
+                var messageType = typeof(TMessage);
+                _descriptors.RemoveAll(d => d.MessageType == messageType && d.Endpoint == endpoint);
+            }
         }
 
-        protected class ReplyGenerator
+        protected class ReplyGenerators
         {
             private readonly ConcurrentDictionary<RuntimeTypeHandle, Delegate> _replyGenerators =
                 new ConcurrentDictionary<RuntimeTypeHandle, Delegate>();
@@ -209,7 +258,11 @@ namespace Messaging
 
             public object GenerateReplyTo<TMessage>(TMessage message)
             {
-                return For<TMessage>().Invoke(message);
+                var generator = For<TMessage>();
+                if(generator != null)
+                    return For<TMessage>().Invoke(message);
+
+                return null;
             }
 
             public void RemoveFor<TMessage>()
@@ -220,7 +273,12 @@ namespace Messaging
 
             public Func<TMessage, object> For<TMessage>()
             {
-                return (Func<TMessage, object>)_replyGenerators[typeof(TMessage).TypeHandle];
+                var typeHandle = typeof(TMessage).TypeHandle;
+
+                if (_replyGenerators.ContainsKey(typeHandle))
+                    return (Func<TMessage, object>)_replyGenerators[typeHandle];
+
+                return null;
             }
         }
     }
@@ -241,6 +299,103 @@ namespace Messaging
 
             QueueName = queueName;
         }
+
+        public override bool Equals(object obj)
+        {
+            if(Object.ReferenceEquals(obj, null))
+                return false;
+            if(Object.ReferenceEquals(this, obj))
+                return true;
+
+            if(obj is QueueEndpoint)
+                return Equals((QueueEndpoint)obj);
+
+            return false;
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+	        {
+                return MachineName.GetHashCode() * 32 + QueueName.GetHashCode();
+	        }
+            
+        }
+
+        private bool Equals(QueueEndpoint other)
+        {
+            return this.MachineName == other.MachineName && this.QueueName == other.QueueName;
+        }
+
+        public static bool operator ==(QueueEndpoint left, QueueEndpoint right)
+        {
+            return Equals(left, right);
+        }
+
+        public static bool operator !=(QueueEndpoint left, QueueEndpoint right)
+        {
+            return !Equals(left, right);
+        }
+    }
+
+    internal class TargetEndpointDescriptor : IEquatable<TargetEndpointDescriptor>
+    {
+        public Type MessageType { get; private set; }
+        public QueueEndpoint Endpoint { get; private set; }
+
+        public TargetEndpointDescriptor(Type messageType, QueueEndpoint endpoint)
+        {
+            MessageType = messageType;
+            Endpoint = endpoint;
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (ReferenceEquals(obj, null))
+                return false;
+            if (ReferenceEquals(this, obj))
+                return true;
+
+            return Equals(obj as TargetEndpointDescriptor);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                return MessageType.GetHashCode() * 31 + Endpoint.GetHashCode();
+            }
+            
+        }
+
+        public bool Equals(TargetEndpointDescriptor other)
+        {
+            if(other == null)
+                return false;
+
+            return this.MessageType == other.MessageType && this.Endpoint == other.Endpoint;
+        }
+    }
+
+    internal class MessageHandlerDescriptor : IEquatable<MessageHandlerDescriptor>
+    {
+        public Type MessageType { get; private set; }
+
+        public Action<object> MessageHandler { get; private set; }
+
+        public MessageHandlerDescriptor(Type messageType, Action<object> messageHandler)
+        {
+            MessageType = messageType;
+            MessageHandler = messageHandler;
+        }
+
+        public bool Equals(MessageHandlerDescriptor other)
+        {
+            if(other == null)
+                return false;
+
+            return this.MessageType == other.MessageType && this.MessageHandler == other.MessageHandler;
+        }
     }
 
     internal static class StringExtension
@@ -259,5 +414,64 @@ namespace Messaging
         Requeue = 2,
         LogError = 3,
         Discard = 4
+    }
+
+    [ContractClassFor(typeof(IMessageBus))]
+    public class MessageBusContract : IMessageBus
+    {
+        public QueueEndpoint LocalEndpoint
+        {
+	        get { throw new NotImplementedException(); }
+        }
+
+        public bool IsRunning
+        {
+	        get { throw new NotImplementedException(); }
+        }
+
+        public void Send<TMessage>(TMessage message)
+        {
+            Contract.Requires(message != null, "message cannot be null");
+        }
+
+        public void Send<TMessage>(TMessage message, QueueEndpoint targetEndpoint)
+        {
+            Contract.Requires(message != null, "message cannot be null");
+        }
+
+        public void RegisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
+        {
+ 	        throw new NotImplementedException();
+        }
+
+        public void DeregisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
+        {
+ 	        throw new NotImplementedException();
+        }
+
+        public void RegisterMessageHandler<TMessage>(Action<TMessage> handler)
+        {
+            Contract.Requires<ArgumentNullException>(handler != null, "handler cannot be null");
+        }
+
+        public void RegisterReplyGenerator<TMessage>(Func<TMessage,object> replyGenerator)
+        {
+            Contract.Requires<ArgumentNullException>(replyGenerator != null, "replyGenerator cannot be null");
+        }
+
+        public void Start()
+        {
+ 	        throw new NotImplementedException();
+        }
+
+        public void Stop()
+        {
+ 	        throw new NotImplementedException();
+        }
+
+        public void Dispose()
+        {
+ 	        throw new NotImplementedException();
+        }
     }
 }
