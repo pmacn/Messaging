@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Contracts;
+using System.IO;
 using System.Linq;
 using System.Messaging;
 using System.Runtime.Serialization;
@@ -13,61 +14,210 @@ using System.Transactions;
 
 namespace Messaging
 {
-    public class MsmqMessageBus : MessageBus
+    //public class MsmqMessageBus : MessageBus
+    //{
+    //    private MessageQueue _localQueue;
+
+    //    private IMessageFormatter _messageFormatter = new BinaryMessageFormatter();
+
+    //    public MsmqMessageBus(string localQueue)
+    //        : base(new QueueEndpoint("", localQueue))
+    //    { }
+
+    //    protected override void SendImpl<TMessage>(TMessage message, QueueEndpoint endpoint)
+    //    {
+    //        var endpointName = MsmqEndpointParser.GetEndpointName(endpoint);
+    //        if (!MessageQueue.Exists(endpointName))
+    //            throw new TargetEndpointNotFoundException(String.Format("Unable to find target endpoint {0}@{1}", endpoint.QueueName, endpoint.MachineName));
+
+    //        using (var targetQueue = new MessageQueue(endpointName))
+    //        {
+    //            targetQueue.SendMessage(WrapInEnvelope(message));
+    //        }
+    //    }
+
+    //    protected override void StartImpl()
+    //    {
+    //        SetupLocalQueue();
+    //        StartListening();
+    //    }
+
+    //    protected override void StopImpl()
+    //    {
+    //        if (_localQueue == null)
+    //            return;
+
+    //        _localQueue.PeekCompleted -= PeekCompletedHandler;
+    //        _localQueue.ReceiveCompleted -= ReceiveCompletedHandler;
+    //        _localQueue.Dispose();
+    //        _localQueue = null;
+    //    }
+
+    //    private Message WrapInEnvelope<TMessage>(TMessage body)
+    //    {
+    //        return new Message {
+    //            Body = body,
+    //            Label = typeof(TMessage).FullName,
+    //            Recoverable = true,
+    //            Formatter = _messageFormatter,
+    //            ResponseQueue = _localQueue
+    //        };
+    //    }
+
+    //    private void SetupLocalQueue()
+    //    {
+    //        var queuePath = MsmqEndpointParser.GetEndpointName(LocalEndpoint);
+    //        _localQueue = GetOrCreateMessageQueue(queuePath);
+    //        _localQueue.Formatter = _messageFormatter;
+    //    }
+
+    //    private void StartListening()
+    //    {
+    //        if (!_localQueue.CanRead)
+    //            throw new NotSupportedException("Unable to read from local queue.");
+
+    //        if (_localQueue.Transactional)
+    //        {
+    //            _localQueue.PeekCompleted += PeekCompletedHandler;
+    //            _localQueue.BeginPeek();
+    //        }
+    //        else
+    //        {
+    //            _localQueue.ReceiveCompleted += ReceiveCompletedHandler;
+    //            _localQueue.BeginReceive();
+    //        }
+    //    }
+
+    //    private MessageQueue GetOrCreateMessageQueue(string endpoint)
+    //    {
+    //        return MessageQueue.Exists(endpoint) ?
+    //               new MessageQueue(endpoint) :
+    //               MessageQueue.Create(endpoint, true);
+    //    }
+
+    //    private void ReceiveCompletedHandler(object sender, ReceiveCompletedEventArgs e)
+    //    {
+    //        var receptionQueue = (MessageQueue)sender;
+    //        var queueMessage = receptionQueue.EndReceive(e.AsyncResult);
+    //        ProcessMessage(queueMessage);
+    //        receptionQueue.BeginReceive();
+    //    }
+
+    //    private void PeekCompletedHandler(object sender, PeekCompletedEventArgs e)
+    //    {
+    //        var queue = (MessageQueue)sender;
+    //        Message queueMessage = null;
+    //        try
+    //        {
+    //            queue.EndPeek(e.AsyncResult);
+    //            queueMessage = queue.Receive();
+    //            ProcessMessage(queueMessage);
+    //        }
+    //        catch (FileNotFoundException)
+    //        {
+    //        }
+    //        catch (Exception)
+    //        {
+    //            if (queueMessage != null)
+    //                SendToErrorQueue(queueMessage);
+    //        }
+
+    //        queue.BeginPeek();
+    //    }
+
+    //    private void ProcessMessage(Message queueMessage)
+    //    {
+    //        var messageBody = queueMessage.Body;
+    //        if (messageBody == null)
+    //            throw new Exception(String.Format("Unable to extract message. Label: {0}", queueMessage.Label));
+
+    //        HandleMessage(messageBody);
+    //        SendReplies(queueMessage);
+    //    }
+
+    //    private void SendReplies(Message message)
+    //    {
+    //        if (message == null || message.ResponseQueue == null)
+    //            return;
+
+    //        var reply = (object)_replyGenerator.GenerateReplyTo((dynamic)message.Body);
+    //        if(reply != null)
+    //            message.ResponseQueue.SendMessage(WrapInEnvelope(reply));
+    //    }
+
+    //    private void SendToErrorQueue(Message queueMessage)
+    //    {
+    //        var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
+    //        using (var mq = GetOrCreateMessageQueue(errorQueuePath))
+    //        {
+    //            mq.SendMessage(queueMessage);
+    //        }
+    //    }
+
+    //    protected override void Dispose(bool disposing)
+    //    {
+    //        base.Dispose(disposing);
+
+    //        if (disposing)
+    //        {
+    //            Stop();
+    //        }
+    //    }
+    //}
+
+    //public class MsmqServiceBus : ServiceBus
+    //{
+    //    public MsmqServiceBus(string localQueue)
+    //        : base(() => new MsmqMessageBus(localQueue)) { }
+    //}
+
+    public sealed class MsmqServiceBus : AbstractServiceBus
     {
+        private readonly IMessageFormatter _messageFormatter = new BinaryMessageFormatter();
+
         private MessageQueue _localQueue;
 
-        private IMessageFormatter _messageFormatter = new BinaryMessageFormatter();
-
-        public MsmqMessageBus(string localQueue)
-            : base(new QueueEndpoint("", localQueue))
-        { }
-
-        protected override void SendImpl<TMessage>(TMessage message, QueueEndpoint endpoint)
+        public MsmqServiceBus(string localQueue)
         {
-            var endpointName = MsmqEndpointParser.GetEndpointName(endpoint);
-            if (!MessageQueue.Exists(endpointName))
-                throw new TargetEndpointNotFoundException(String.Format("Unable to find target endpoint {0}@{1}", endpoint.QueueName, endpoint.MachineName));
+            LocalEndpoint = new QueueEndpoint(".", localQueue);
+        }
 
-            using (var targetQueue = new MessageQueue(endpointName))
-            {
-                targetQueue.SendMessage(WrapInEnvelope(message));
-            }
+        protected override void SendImpl(object message, QueueEndpoint targetEndpoint)
+        {
+            var targetQueuePath = MsmqEndpointParser.GetEndpointName(targetEndpoint);
+            if(!MessageQueue.Exists(targetQueuePath))
+                return; // TODO: Should let the user know that the target was not reached
+
+            var targetQueue = new MessageQueue(targetQueuePath);
+            targetQueue.SendMessage(WrapInMsmqMessage(message));
+        }
+
+        private Message WrapInMsmqMessage(object message)
+        {
+            return new Message
+                       {
+                           Body = message,
+                           Label = message.GetType().FullName,
+                           Formatter = _messageFormatter,
+                           Recoverable = true,
+                           ResponseQueue = _localQueue
+                       };
         }
 
         protected override void StartImpl()
         {
-            SetupLocalQueue();
+            var queuePath = MsmqEndpointParser.GetLocalQueuePath(LocalEndpoint);
+            _localQueue = GetOrCreateMessageQueue(queuePath);
+
+            _localQueue.Formatter = _messageFormatter;
             StartListening();
         }
 
-        protected override void StopImpl()
+        private MessageQueue GetOrCreateMessageQueue(string endpoint)
         {
-            if (_localQueue == null)
-                return;
-
-            _localQueue.PeekCompleted -= PeekCompletedHandler;
-            _localQueue.ReceiveCompleted -= ReceiveCompletedHandler;
-            _localQueue.Dispose();
-            _localQueue = null;
-        }
-
-        private Message WrapInEnvelope<TMessage>(TMessage body)
-        {
-            return new Message {
-                Body = body,
-                Label = typeof(TMessage).FullName,
-                Recoverable = true,
-                Formatter = _messageFormatter,
-                ResponseQueue = _localQueue
-            };
-        }
-
-        private void SetupLocalQueue()
-        {
-            var queuePath = MsmqEndpointParser.GetEndpointName(LocalEndpoint);
-            _localQueue = GetOrCreateMessageQueue(queuePath);
-            _localQueue.Formatter = _messageFormatter;
+            return MessageQueue.Exists(endpoint) ?
+                   new MessageQueue(endpoint) :
+                   MessageQueue.Create(endpoint, true);
         }
 
         private void StartListening()
@@ -87,19 +237,15 @@ namespace Messaging
             }
         }
 
-        private MessageQueue GetOrCreateMessageQueue(string endpoint)
+        protected override void StopImpl()
         {
-            return MessageQueue.Exists(endpoint) ?
-                   new MessageQueue(endpoint) :
-                   MessageQueue.Create(endpoint, true);
-        }
+            if(_localQueue == null)
+                return;
 
-        private void ReceiveCompletedHandler(object sender, ReceiveCompletedEventArgs e)
-        {
-            var receptionQueue = (MessageQueue)sender;
-            var queueMessage = receptionQueue.EndReceive(e.AsyncResult);
-            ProcessMessage(queueMessage);
-            receptionQueue.BeginReceive();
+            _localQueue.PeekCompleted -= PeekCompletedHandler;
+            _localQueue.ReceiveCompleted -= ReceiveCompletedHandler;
+            _localQueue.Dispose();
+            _localQueue = null;
         }
 
         private void PeekCompletedHandler(object sender, PeekCompletedEventArgs e)
@@ -114,50 +260,37 @@ namespace Messaging
             }
             catch (Exception)
             {
-                if (queueMessage != null)
-                    SendToErrorQueue(queueMessage);
+                //if (queueMessage != null)
+                //    SendToErrorQueue(queueMessage);
             }
 
             queue.BeginPeek();
         }
 
+        private void ReceiveCompletedHandler(object sender, ReceiveCompletedEventArgs e)
+        {
+            var receptionQueue = (MessageQueue)sender;
+            var queueMessage = receptionQueue.EndReceive(e.AsyncResult);
+            ProcessMessage(queueMessage);
+            receptionQueue.BeginReceive();
+        }
+
         private void ProcessMessage(Message queueMessage)
         {
             var messageBody = queueMessage.Body;
+
             if (messageBody == null)
                 throw new Exception(String.Format("Unable to extract message. Label: {0}", queueMessage.Label));
 
             HandleMessage(messageBody);
-            SendReplies(queueMessage);
-        }
-
-        private void SendReplies(Message message)
-        {
-            if (message == null || message.ResponseQueue == null)
-                return;
-
-            var reply = (object)_replyGenerator.GenerateReplyTo((dynamic)message.Body);
-            if(reply != null)
-                message.ResponseQueue.SendMessage(WrapInEnvelope(reply));
-        }
-
-        private void SendToErrorQueue(Message queueMessage)
-        {
-            var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
-            using (var mq = GetOrCreateMessageQueue(errorQueuePath))
-            {
-                mq.SendMessage(queueMessage);
-            }
+            var responseEndpoint = new QueueEndpoint(queueMessage.ResponseQueue.MachineName, queueMessage.ResponseQueue.QueueName);
+            SendReplies(messageBody, responseEndpoint);
         }
 
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-
-            if (disposing)
-            {
-                Stop();
-            }
+            Stop();
         }
     }
 
