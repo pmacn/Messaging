@@ -1,16 +1,48 @@
-﻿
-namespace Messaging
-{
-    using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics.Contracts;
 using System.Linq;
-    using System.Linq.Expressions;
+using System.Messaging;
 
-    public interface IServiceBus : IMessageBus
+namespace Messaging
+{
+    public interface IServiceBus : IDisposable
     {
         SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
+
+        UnhandledMessagesPolicy UnhandledMessagesPolicy { get; set; }
+
+        /// <summary>
+        /// Gets the local queue endpoint
+        /// </summary>
+        BusEndpoint LocalEndpoint { get; }
+
+        /// <summary>
+        /// True if the messagebus is currently listening for messages. Otherwise false.
+        /// </summary>
+        bool IsRunning { get; }
+
+        MessageHandlers MessageHandlers { get; }
+
+        TargetEndpoints TargetEndpoints { get; }
+
+        void RegisterReplyGenerator<TMessage>(Func<TMessage, object> replyGenerator);
+
+        /// <summary>
+        /// Sends a message to all target endpoints registered for that type of message.
+        /// </summary>
+        /// <param name="message">Message to send</param>
+        void Send(object message);
+
+        /// <summary>
+        /// Starts listening on the local queue
+        /// </summary>
+        void Start();
+
+        /// <summary>
+        /// Stops listening on the local queue
+        /// </summary>
+        void Stop();
 
         /// <summary>
         /// Publishes a message to all subscribers that have registered for the specific type of message.
@@ -23,299 +55,129 @@ using System.Linq;
         /// Sends a command to the speficied endpoint requesting to receive messages of the specified type.
         /// </summary>
         /// <typeparam name="TMessage"></typeparam>
-        /// <param name="endpointName"></param>
+        /// <param name="publisherEndpoint"></param>
         /// <param name="handler"></param>
-        void SubscribeTo<TMessage>(QueueEndpoint endpointName, Action<TMessage> handler)
+        void SubscribeTo<TMessage>(BusEndpoint publisherEndpoint, Action<TMessage> handler, bool UnsubscribeOnStop = true)
             where TMessage : class;
 
         /// <summary>
         /// Sends a command to the specified endpoint requesting to stop receiving messages of the specified type.
         /// </summary>
         /// <typeparam name="TMessage"></typeparam>
-        /// <param name="endpointName"></param>
-        void Unsubscribe<TMessage>(QueueEndpoint endpointName)
+        /// <param name="publisherEndpoint"></param>
+        void Unsubscribe<TMessage>(BusEndpoint publisherEndpoint)
             where TMessage : class;
     }
 
-    public abstract class AbstractServiceBus : IServiceBus
+    [Serializable]
+    public class Subscription : IEquatable<Subscription>, IEquatable<Subscriber>
     {
-        private readonly TargetEndpoints _targetEndpoints = new TargetEndpoints();
-
-        private readonly Subscribers _subscribers = new Subscribers();
-
-        private readonly List<SubscriptionStarted> _subscriptions = new List<SubscriptionStarted>();
-
-        private readonly ReplyGenerators _replyGenerators = new ReplyGenerators();
-
-        protected AbstractServiceBus()
+        public Subscription(Type messageType, BusEndpoint subscriberEndpoint, BusEndpoint publisherEndpoint, bool unsubscribeOnStop)
         {
-            MessageHandlers = new MessageHandlers();
-            MessageHandlers.Add<StartSubscriptionRequest>(Handle);
-            MessageHandlers.Add<EndSubscriptionRequest>(Handle);
+            Token = Guid.NewGuid();
+            MessageType = messageType;
+            SubscriberEndpoint = subscriberEndpoint;
+            PublisherEndpoint = publisherEndpoint;
+            UnsubscribeOnStop = unsubscribeOnStop;
         }
 
-        private void Handle(EndSubscriptionRequest request)
-        {
-            _subscribers.Remove(request);
-        }
-
-        private void Handle(StartSubscriptionRequest request)
-        {
-            _subscribers.Add(request);
-        }
-
-        public MessageHandlers MessageHandlers { get; private set; }
-
-        public SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
-
-        public void Publish(object message)
-        {
-            var messageType = message.GetType();
-            foreach (var subscriber in _subscribers.GetFor(messageType))
-            {
-                SendImpl(message, subscriber);
-            }
-        }
-
-        public void SubscribeTo<TMessage>(QueueEndpoint publisherEndpoint, Action<TMessage> handler) where TMessage : class
-        {
-            MessageHandlers.Add<TMessage>(handler);
-            Start();
-            var request = new StartSubscriptionRequest { Token = Guid.NewGuid(), MessageType = typeof(TMessage), SubscriberEndpoint = LocalEndpoint };
-            SendImpl(request, publisherEndpoint);
-        }
-
-        public void Unsubscribe<TMessage>(QueueEndpoint publisherEndpoint)
-            where TMessage : class
-        {
-            var messageType = typeof(TMessage);
-            var subsToEnd = _subscriptions.Where(s => s.MessageType == messageType && s.PublisherEndpoint == publisherEndpoint).ToList();
-            foreach (var sub in subsToEnd)
-            {
-                SendImpl(new EndSubscriptionRequest { SubscriptionToken = sub.SubscriptionToken }, sub.PublisherEndpoint);
-            }
-
-            _subscriptions.RemoveAll(subsToEnd.Contains);
-        }
-
-        public QueueEndpoint LocalEndpoint { get; protected set; }
-
-        public bool IsRunning { get; protected set; }
-
-        public void Send(object message)
-        {
-            var messageType = message.GetType();
-            foreach (var endpoint in _targetEndpoints.For(messageType))
-            {
-                SendImpl(message, endpoint);
-            }
-        }
-
-        public void Send(object message, QueueEndpoint targetEndpoint)
-        {
-            SendImpl(message, targetEndpoint);
-        }
-
-        protected abstract void SendImpl(object message, QueueEndpoint targetEndpoint);
-
-        protected void HandleMessage(object message)
-        {
-            var messageType = message.GetType();
-            foreach (var handler in MessageHandlers.For(messageType))
-            {
-                handler.Handle(message);
-            }
-        }
-
-        protected void SendReplies(object message, QueueEndpoint responseEndpoint)
-        {
-            var reply = _replyGenerators.GenerateReplyTo(message);
-            if(reply != null)
-                SendImpl(reply, responseEndpoint);
-        }
-
-        public void RegisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
-        {
-            _targetEndpoints.AddFor<TMessage>(targetEndpoint);
-        }
-
-        public void DeregisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
-        {
-            _targetEndpoints.RemoveFor<TMessage>(targetEndpoint);
-        }
-
-        public void RegisterReplyGenerator<TMessage>(Func<TMessage, object> replyGenerator)
-        {
-            
-        }
-
-        public void Start()
-        {
-            if(IsRunning)
-                return;
-
-            StartImpl();
-            IsRunning = true;
-        }
-
-        protected abstract void StartImpl();
-
-        public void Stop()
-        {
-            if(!IsRunning)
-                return;
-
-            IsRunning = false;
-            StopImpl();
-        }
-
-        protected abstract void StopImpl();
-
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing) { }
-    }
-
-    internal class Subscribers
-    {
-        List<SubscriberDescriptor> _subscribers = new List<SubscriberDescriptor>();
-
-        public IEnumerable<QueueEndpoint> GetFor(Type messageType)
-        {
-            lock (_subscribers)
-            {
-                return _subscribers.Where(s => s.MessageType.IsAssignableFrom(messageType))
-                                   .Select(s => s.Endpoint)
-                                   .ToList();
-            }
-        }
-
-        public void Add(StartSubscriptionRequest request)
-        {
-            var desc = new SubscriberDescriptor { MessageType = request.MessageType, Endpoint = request.SubscriberEndpoint, SubscriptionToken = request.Token };
-            lock (_subscribers)
-            {
-                _subscribers.Add(desc);
-            }
-        }
-
-        internal void Remove(EndSubscriptionRequest request)
-        {
-            lock (_subscribers)
-            {
-                _subscribers.RemoveAll(s => s.SubscriptionToken == request.SubscriptionToken);
-            }
-        }
-    }
-
-    internal class TargetEndpoints
-    {
-        List<TargetEndpoint> _endpoints = new List<TargetEndpoint>();
-
-        public void AddFor<TMessage>(QueueEndpoint endpoint)
-        {
-            var messageType = typeof(TMessage);
-            lock (_endpoints)
-            {
-                if (!_endpoints.Any(e => e.MessageType.IsAssignableFrom(messageType) && e.Endpoint == endpoint))
-                {
-                    _endpoints.Add(new TargetEndpoint { MessageType = messageType, Endpoint = endpoint });
-                }
-            }
-        }
-
-        public void RemoveFor<TMessage>(QueueEndpoint endpoint)
-        {
-            var messageType = typeof(TMessage);
-            lock (_endpoints)
-            {
-                _endpoints.RemoveAll(e => e.MessageType == messageType && e.Endpoint == endpoint);
-            }
-        }
-
-        public IEnumerable<QueueEndpoint> For(Type messageType)
-        {
-            return _endpoints.Where(e => e.MessageType.IsAssignableFrom(messageType))
-                             .Select(e => e.Endpoint)
-                             .ToList();
-        }
-    }
-
-    internal class TargetEndpoint
-    {
-        public Type MessageType { get; set; }
-        public QueueEndpoint Endpoint { get; set; }
-    }
-
-    internal interface IMessageHandler
-    {
-        Type MessageType { get; }
-
-        void Handle(object message);
-    }
-
-    internal class MessageHandler<TMessage> : IMessageHandler
-    {
-        private Action<TMessage> _handler;
-
-        public MessageHandler(Action<TMessage> handler)
-        {
-            MessageType = typeof(TMessage);
-            _handler = handler;
-        }
+        public Guid Token { get; private set; }
 
         public Type MessageType { get; private set; }
 
-        public void Handle(object message)
+        public BusEndpoint SubscriberEndpoint { get; private set; }
+
+        public BusEndpoint PublisherEndpoint { get; private set; }
+
+        public bool UnsubscribeOnStop { get; private set; }
+
+        public override int GetHashCode()
         {
-            _handler((TMessage)message);
+            return Token.GetHashCode();
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (ReferenceEquals(obj, null))
+                return false;
+            if (ReferenceEquals(this, obj))
+                return true;
+            if (obj is Subscription)
+                return Equals((Subscription)obj);
+            if (obj is Subscriber)
+                return Equals((Subscriber)obj);
+            return false;
+        }
+
+        public bool Equals(Subscription other)
+        {
+            if(other == null)
+                return false;
+
+            return this.Token == other.Token;
+        }
+
+        public bool Equals(Subscriber other)
+        {
+            if(other == null)
+                return false;
+
+            return this.Token == other.Token;
         }
     }
 
-    public class MessageHandlers
+    [Serializable]
+    public class Subscriber : IEquatable<Subscriber>, IEquatable<Subscription>
     {
-        private List<IMessageHandler> _messageHandlers = new List<IMessageHandler>();
-
-        internal MessageHandlers()
+        private Subscriber(Guid token, Type messageType, BusEndpoint endpoint)
         {
+            Token = token;
+            MessageType = messageType;
+            Endpoint = endpoint;
         }
 
-        public void Add<TMessage>(Action<TMessage> handler)
+        public Guid Token { get; private set; }
+
+        public Type MessageType { get; private set; }
+
+        public BusEndpoint Endpoint { get; private set; }
+
+        public override bool Equals(object obj)
         {
-            var messageType = typeof(TMessage);
-            // TODO: switch this around so we're not creating an instance if we don't have to
-            var messageHandler = new MessageHandler<TMessage>(handler);
-            lock (_messageHandlers)
-            {
-                if (!_messageHandlers.Contains(messageHandler))
-                    _messageHandlers.Add(messageHandler);
-            }
+            if(ReferenceEquals(obj, null))
+                return false;
+            if(ReferenceEquals(this, obj))
+                return true;
+            if(obj is Subscriber)
+                return Equals((Subscriber)obj);
+            if(obj is Subscription)
+                return Equals((Subscription)obj);
+            return false;
         }
 
-        public void Remove<TMessage>(Action<TMessage> handler)
+        public bool Equals(Subscriber other)
         {
-            var messageType = typeof(TMessage);
-            lock (_messageHandlers)
-            {
-                _messageHandlers.RemoveAll(h => h.MessageType == messageType);
-            }
+            if (other == null)
+                return false;
+            return this.Token == other.Token;
         }
 
-        internal IEnumerable<IMessageHandler> For(Type messageType)
+        public bool Equals(Subscription other)
         {
-            return _messageHandlers.Where(h => messageType.IsAssignableFrom(h.MessageType))
-                                   .ToList();
+            if (other == null)
+                return false;
+            return this.Token == other.Token;
+        }
+
+        public static Subscriber From(Subscription subscription)
+        {
+            return new Subscriber(subscription.Token, subscription.MessageType, subscription.SubscriberEndpoint);
         }
     }
 
     internal class ReplyGenerators
     {
-        private readonly ConcurrentDictionary<Type, Delegate> _replyGenerators =
-            new ConcurrentDictionary<Type, Delegate>();
+        private readonly ConcurrentDictionary<Type, Delegate> _replyGenerators = new ConcurrentDictionary<Type, Delegate>();
 
         public void AddFor<TMessage>(Func<TMessage, object> replyGenerator)
         {
@@ -326,11 +188,9 @@ using System.Linq;
         public object GenerateReplyTo(object message)
         {
             var messageType = message.GetType();
-
             Delegate generator;
-            if(!_replyGenerators.TryGetValue(messageType, out generator))
+            if (!_replyGenerators.TryGetValue(messageType, out generator))
                 return null;
-
             return generator.DynamicInvoke(message);
         }
 
@@ -348,216 +208,303 @@ using System.Linq;
         Remove
     }
 
-    //public abstract class ServiceBus : IServiceBus
-    //{
-    //    private readonly List<SubscriberDescriptor> _subscribers = new List<SubscriberDescriptor>();
-
-    //    private readonly List<SubscriptionStarted> _subscriptions = new List<SubscriptionStarted>();
-
-    //    private readonly List<Subscription> Subscriptions = new List<Subscription>();
-
-    //    private readonly Func<IMessageBus> _busFactory;
-
-    //    private readonly IMessageBus _messageBus;
-
-    //    protected ServiceBus(Func<IMessageBus> busFactory)
-    //    {
-    //        Contract.Requires<ArgumentNullException>(busFactory != null, "busFactory cannot be null");
-
-    //        _busFactory = busFactory;
-    //        _messageBus = busFactory();
-    //        _messageBus.RegisterMessageHandler<StartSubscriptionCommand>(Handle);
-    //        _messageBus.RegisterMessageHandler<EndSubscriptionCommand>(Handle);
-    //        SubscriberNotFoundPolicy = SubscriberEndpointNotFoundPolicy.Remove;
-    //    }
-
-    //    public SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
-
-    //    public void Publish<TMessage>(TMessage message)
-    //        where TMessage : class
-    //    {
-    //        if (!IsRunning)
-    //            throw new InvalidOperationException("Bus has not been started");
-
-    //        var messageType = typeof(TMessage);
-    //        var targetEndpointsNotFound = new List<SubscriberDescriptor>();
-    //        foreach (var subscription in _subscribers.Where(s => s.MessageType == messageType).ToList())
-    //        {
-    //            try
-    //            {
-    //                _messageBus.Send(message, subscription.Endpoint);
-    //            }
-    //            catch (TargetEndpointNotFoundException)
-    //            {
-    //                targetEndpointsNotFound.Add(subscription);
-    //            }
-    //        }
-
-    //        if (SubscriberNotFoundPolicy == SubscriberEndpointNotFoundPolicy.Remove)
-    //            _subscribers.RemoveAll(targetEndpointsNotFound.Contains);
-    //    }
-
-    //    public void SubscribeTo<TMessage>(QueueEndpoint publisherEndpoint, Action<TMessage> handler)
-    //        where TMessage : class
-    //    {
-    //        _messageBus.Start();
-    //        _messageBus.RegisterMessageHandler<TMessage>(handler);
-    //        var subCommand = new StartSubscriptionCommand { MessageType = typeof(TMessage), SubscriberEndpoint = _messageBus.LocalEndpoint };
-    //        _messageBus.Send(subCommand, publisherEndpoint);
-    //    }
-
-    //    public void Unsubscribe<TMessage>(QueueEndpoint publisherEndpoint)
-    //        where TMessage : class
-    //    {
-    //        var messageType = typeof(TMessage);
-    //        var subscription = _subscriptions.SingleOrDefault(s => s.MessageType == messageType && s.PublisherEndpoint == publisherEndpoint);
-    //        if (subscription == null)
-    //            return;
-
-    //        var subCommand = new EndSubscriptionCommand { SubscriptionToken = subscription.SubscriptionToken };
-    //        _messageBus.Send(subCommand, publisherEndpoint);
-    //        _subscriptions.Remove(subscription);
-    //    }
-
-    //    public void Dispose()
-    //    {
-    //        foreach (var sub in _subscriptions)
-    //        {
-    //            _messageBus.Send(new EndSubscriptionCommand { SubscriptionToken = sub.SubscriptionToken }, sub.PublisherEndpoint);
-    //        }
-            
-    //        _subscriptions.Clear();
-
-    //        if (_messageBus != null)
-    //        {
-    //            _messageBus.Dispose();
-    //        }
-
-    //        _subscribers.Clear();
-    //        _subscriptions.Clear();
-    //    }
-
-    //    private void Handle(SubscriptionStarted command)
-    //    {
-    //        _subscriptions.Add(command);
-    //        Subscriptions.Add(new Subscription(command.SubscriptionToken));
-    //    }
-
-    //    private void Handle(StartSubscriptionCommand command)
-    //    {
-    //        var subscriber = new SubscriberDescriptor { Endpoint = command.SubscriberEndpoint, MessageType = command.MessageType, SubscriptionToken = Guid.NewGuid() };
-    //        _subscribers.Add(subscriber);
-    //        SendConfirmation(subscriber);
-    //    }
-
-    //    private void Handle(EndSubscriptionCommand command)
-    //    {
-    //        _subscribers.RemoveAll(s => s.SubscriptionToken == command.SubscriptionToken);
-    //    }
-
-    //    private void SendConfirmation(SubscriberDescriptor subscriber)
-    //    {
-    //        _messageBus.Send(
-    //            new SubscriptionStarted
-    //            {
-    //                MessageType = subscriber.MessageType,
-    //                SubscriptionToken = subscriber.SubscriptionToken,
-    //                PublisherEndpoint = _messageBus.LocalEndpoint
-    //            },
-    //            subscriber.Endpoint);
-    //    }
-
-    //    #region IMessageBus pass-through
-
-    //    public QueueEndpoint LocalEndpoint { get { return _messageBus.LocalEndpoint; } }
-
-    //    public bool IsRunning { get { return _messageBus.IsRunning; } }
-
-    //    public void Send<TMessage>(TMessage message) { _messageBus.Send<TMessage>(message); }
-
-    //    public void Send<TMessage>(TMessage message, QueueEndpoint targetEndpoint)
-    //    { _messageBus.Send<TMessage>(message, targetEndpoint); }
-
-    //    public void RegisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
-    //    { _messageBus.RegisterTargetEndpoint<TMessage>(targetEndpoint); }
-
-    //    public void DeregisterTargetEndpoint<TMessage>(QueueEndpoint targetEndpoint)
-    //    { _messageBus.DeregisterTargetEndpoint<TMessage>(targetEndpoint); }
-
-    //    public void RegisterMessageHandler<TMessage>(Action<TMessage> handler)
-    //    { _messageBus.RegisterMessageHandler<TMessage>(handler); }
-
-    //    public void RegisterReplyGenerator<TMessage>(Func<TMessage, object> replyGenerator)
-    //    { _messageBus.RegisterReplyGenerator<TMessage>(replyGenerator); }
-
-    //    public void Start() { _messageBus.Start(); }
-
-    //    public void Stop() { _messageBus.Stop(); }
-        
-    //    #endregion
-    //}
-
-    public class SubscriberDescriptor
+    public enum UnhandledMessagesPolicy
     {
-        public Type MessageType { get; set; }
-        public QueueEndpoint Endpoint { get; set; }
-        public Guid SubscriptionToken { get; set; }
+        Requeue,
+        SendToErrorQueue,
+        Discard
     }
 
-    public class Subscription
+    internal static class MessageQueueExtensions
     {
-        private Guid _token;
-
-        internal Subscription (Guid token)
+        public static void SendMessage(this MessageQueue mq, Message message)
         {
-            _token = token;
-        }
-
-        internal Guid GetToken()
-        {
-            return _token;
-        }
-    }
-
-    [Serializable]
-    public class StartSubscriptionRequest
-    {
-        public Guid Token { get; set; }
-
-        public Type MessageType { get; set; }
-
-        private QueueEndpoint _subscriberEndpoint;
-
-        public QueueEndpoint SubscriberEndpoint
-        {
-            get { return _subscriberEndpoint; }
-            set
+            if (mq.Transactional)
             {
-                _subscriberEndpoint =
-                    value.MachineName == "" ?
-                    new QueueEndpoint(System.Environment.MachineName, value.QueueName) :
-                    value;
+                using (var transaction = new MessageQueueTransaction())
+                {
+                    transaction.Begin();
+                    mq.Send(message, transaction);
+                    transaction.Commit();
+                }
+            }
+            else
+            {
+                mq.Send(message);
             }
         }
     }
 
-    [Serializable]
-    public class EndSubscriptionRequest
+    public sealed class ServiceBus : IServiceBus
     {
-        public Guid SubscriptionToken { get; set; }
-    }
+        private readonly IMessageFormatter _messageFormatter = new BinaryMessageFormatter();
 
-    [Serializable]
-    public class SubscriptionStarted
-    {
-        public Type MessageType { get; set; }
-        public QueueEndpoint PublisherEndpoint { get; set; }
-        public Guid SubscriptionToken { get; set; }
-    }
+        private readonly List<Subscriber> _subscribers = new List<Subscriber>();
 
-    [Serializable]
-    public class SubscriptionEnded
-    {
-        public Guid SubscriptionToken { get; set; }
+        private readonly Subscriptions _subscriptions = new Subscriptions();
+
+        private readonly ReplyGenerators _replyGenerators = new ReplyGenerators();
+
+        private MessageQueue _localQueue;
+
+        public ServiceBus(string localQueueName)
+        {
+            LocalEndpoint = new BusEndpoint("", localQueueName);
+            MessageHandlers = new MessageHandlers();
+            TargetEndpoints = new TargetEndpoints();
+            MessageHandlers.Add<StartSubscriptionRequest>(Handle);
+            MessageHandlers.Add<EndSubscriptionRequest>(Handle);
+            //MessageHandlers.Add<SubscriptionStarted>(Handle);
+            //MessageHandlers.Add<SubscriptionEnded>(Handle);
+            _replyGenerators.AddFor<StartSubscriptionRequest>(r => new SubscriptionStarted(r.Subscription));
+            _replyGenerators.AddFor<EndSubscriptionRequest>(r => new SubscriptionEnded(r.Subscription));
+        }
+
+        private void Handle(StartSubscriptionRequest request)
+        {
+            _subscribers.Add(Subscriber.From(request.Subscription));
+        }
+
+        private void Handle(EndSubscriptionRequest request)
+        {
+            _subscribers.Remove(Subscriber.From(request.Subscription));
+        }
+
+        //private void Handle(SubscriptionStarted obj) { _subscriptions.Add(obj.Subscription); }
+
+        //private void Handle(SubscriptionEnded obj) { _subscriptions.Remove(obj.Subscription); }
+
+        public SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
+
+        public UnhandledMessagesPolicy UnhandledMessagesPolicy { get; set; }
+
+        public BusEndpoint LocalEndpoint { get; private set; }
+
+        public bool IsRunning { get; private set; }
+
+        public MessageHandlers MessageHandlers { get; private set; }
+
+        public TargetEndpoints TargetEndpoints { get; private set; }
+
+        public void RegisterReplyGenerator<TMessage>(Func<TMessage, object> replyGenerator)
+        {
+            _replyGenerators.AddFor<TMessage>(replyGenerator);
+        }
+
+        public void Send(object message)
+        {
+            var messageType = message.GetType();
+            Send(message, TargetEndpoints.GetFor(messageType));
+        }
+
+        private void Send(object message, BusEndpoint targetEndpoint)
+        {
+            var queuePath = MsmqEndpointParser.GetQueuePath(targetEndpoint);
+            if (!MessageQueue.Exists(queuePath))
+                throw new TargetEndpointNotFoundException("Unable to reach target endpoint " + targetEndpoint.QueueName + "@" + targetEndpoint.MachineName);
+            var remoteQueue = new MessageQueue(queuePath, QueueAccessMode.Send);
+            if (!remoteQueue.CanWrite)
+                throw new UnableToSendMessageException("Unable to send message to " + targetEndpoint.QueueName + "@" + targetEndpoint.MachineName);
+            remoteQueue.SendMessage(WrapInMsmqMessage(message));
+        }
+
+        private Message WrapInMsmqMessage(object message)
+        {
+            return new Message
+            {
+                Body = message,
+                Label = message.GetType().FullName,
+                Formatter = _messageFormatter,
+                Recoverable = true,
+                ResponseQueue = _localQueue
+            };
+        }
+
+        public void Start()
+        {
+            if (IsRunning)
+                return;
+            IsRunning = true;
+            var queuePath = MsmqEndpointParser.GetLocalQueuePath(LocalEndpoint);
+            _localQueue = GetOrCreateMessageQueue(queuePath);
+            _localQueue.Formatter = _messageFormatter;
+            StartListening();
+        }
+
+        private MessageQueue GetOrCreateMessageQueue(string queuePath)
+        {
+            try
+            {
+                return MessageQueue.Exists(queuePath) ?
+                       new MessageQueue(queuePath) :
+                       MessageQueue.Create(queuePath, true);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new UnableToStartMessageBusException(String.Format("{0} is not a valid queue", queuePath), ex);
+            }
+            catch (MessageQueueException ex)
+            {
+                throw new UnableToStartMessageBusException("Unable to start message bus", ex);
+            }
+        }
+
+        private void StartListening()
+        {
+            if (!_localQueue.CanRead)
+                throw new UnableToReadMessagesException(String.Format("Cannot read messages from {0}@{1}", LocalEndpoint.QueueName, LocalEndpoint.MachineName));
+            if (_localQueue.Transactional)
+            {
+                _localQueue.PeekCompleted += PeekCompletedHandler;
+                _localQueue.BeginPeek();
+            }
+            else
+            {
+                _localQueue.ReceiveCompleted += ReceiveCompletedHandler;
+                _localQueue.BeginReceive();
+            }
+        }
+
+        private void PeekCompletedHandler(object sender, PeekCompletedEventArgs e)
+        {
+            var queue = (MessageQueue)sender;
+            Message queueMessage = null;
+            try
+            {
+                queue.EndPeek(e.AsyncResult);
+                queueMessage = queue.Receive();
+                ProcessMessage(queueMessage);
+            }
+            catch (Exception)
+            {
+                if (queueMessage != null)
+                    SendToErrorQueue(queueMessage);
+            }
+            queue.BeginPeek();
+        }
+
+        private void ReceiveCompletedHandler(object sender, ReceiveCompletedEventArgs e)
+        {
+            var queue = (MessageQueue)sender;
+            Message message = null;
+            try
+            {
+                message = queue.EndReceive(e.AsyncResult);
+                ProcessMessage(message);
+            }
+            catch
+            {
+                if (message != null)
+                    SendToErrorQueue(message);
+            }
+            queue.BeginReceive();
+        }
+
+        private void ProcessMessage(Message obj)
+        {
+            var message = obj.Body;
+            var messageType = message.GetType();
+            var handlers = MessageHandlers.For(messageType);
+            if (!handlers.Any())
+            {
+                switch (UnhandledMessagesPolicy)
+                {
+                    //case UnhandledMessagesPolicy.Discard:
+                    //    break;
+                    case UnhandledMessagesPolicy.Requeue:
+                        _localQueue.Send(obj);
+                        break;
+                    case UnhandledMessagesPolicy.SendToErrorQueue:
+                        SendToErrorQueue(obj);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            foreach (var handler in handlers)
+            {handler.Handle(message);}
+            SendReply(obj);
+        }
+
+        private void SendToErrorQueue(Message obj)
+        {
+            var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
+            var errorQueue = GetOrCreateMessageQueue(errorQueuePath);
+            errorQueue.Send(obj);
+            errorQueue.Dispose();
+        }
+
+        private void SendReply(Message msmqMessage)
+        {
+            if (msmqMessage.ResponseQueue == null)
+                return;
+            var responseEndpoint = MsmqEndpointParser.GetEndpoint(msmqMessage.ResponseQueue);
+            var reply = _replyGenerators.GenerateReplyTo(msmqMessage.Body);
+            if (reply != null)
+                Send(reply, responseEndpoint);
+        }
+
+        public void Stop()
+        {
+            if (!IsRunning)
+                return;
+
+            IsRunning = false;
+            if (_localQueue != null)
+            {
+                _localQueue.PeekCompleted -= PeekCompletedHandler;
+                _localQueue.ReceiveCompleted -= ReceiveCompletedHandler;
+                _localQueue.Dispose();
+                _localQueue = null;
+            }
+        }
+
+        public void Publish(object message)
+        {
+            var messageType = message.GetType();
+            var unreachableSubscribers = new List<Subscriber>();
+            foreach (var subscriber in _subscribers.Where(s => s.MessageType.IsAssignableFrom(messageType)))
+            {
+                try
+                {
+                    Send(message, subscriber.Endpoint);
+                }
+                catch (TargetEndpointNotFoundException)
+                {
+                    unreachableSubscribers.Add(subscriber);
+                }
+            }
+            if (SubscriberNotFoundPolicy == SubscriberEndpointNotFoundPolicy.Remove)
+                _subscribers.RemoveAll(unreachableSubscribers.Contains);
+        }
+
+        public void SubscribeTo<TMessage>(BusEndpoint publisherEndpoint, Action<TMessage> handler, bool unsubscribeOnStop = true)
+            where TMessage : class
+        {
+            MessageHandlers.Add<TMessage>(handler);
+            var subscription = new Subscription(typeof(TMessage), LocalEndpoint, publisherEndpoint, unsubscribeOnStop);
+            _subscriptions.Add(subscription);
+            Send(new StartSubscriptionRequest(subscription), publisherEndpoint);
+        }
+
+        public void Unsubscribe<TMessage>(BusEndpoint publisherEndpoint)
+            where TMessage : class
+        {
+            var messageType = typeof(TMessage);
+            var subs = _subscriptions.For(messageType);
+            
+            foreach (var subscription in subs)
+            {
+                Send(new EndSubscriptionRequest(subscription), publisherEndpoint);
+            }
+
+            // TODO: Need to also remove the messagehandlers, store them separately from the regular ones?
+            _subscriptions.Remove(messageType, publisherEndpoint);
+        }
+
+        public void Dispose()
+        {
+            Stop();
+        }
     }
 }

@@ -113,11 +113,15 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="BusEndpoint.cs" />
     <Compile Include="Exceptions.cs" />
-    <Compile Include="MessageBus.cs" />
+    <Compile Include="InternalMessages.cs" />
+    <Compile Include="MessageHandlers.cs" />
+    <Compile Include="MsmqEndpointParser.cs" />
     <Compile Include="ServiceBus.cs" />
-    <Compile Include="MsmqMessageBus.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Subscribers.cs" />
+    <Compile Include="TargetEndpoints.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
