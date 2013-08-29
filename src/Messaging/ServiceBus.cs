@@ -6,9 +6,12 @@ using System.Messaging;
 
 namespace Messaging
 {
+    /// <summary>
+    /// Unneccessary interface ftw!
+    /// </summary>
     public interface IServiceBus : IDisposable
     {
-        SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
+        SubscriberNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
 
         UnhandledMessagesPolicy UnhandledMessagesPolicy { get; set; }
 
@@ -142,6 +145,11 @@ namespace Messaging
 
         public BusEndpoint Endpoint { get; private set; }
 
+        public override int GetHashCode()
+        {
+            return Token.GetHashCode();
+        }
+
         public override bool Equals(object obj)
         {
             if(ReferenceEquals(obj, null))
@@ -175,34 +183,7 @@ namespace Messaging
         }
     }
 
-    internal class ReplyGenerators
-    {
-        private readonly ConcurrentDictionary<Type, Delegate> _replyGenerators = new ConcurrentDictionary<Type, Delegate>();
-
-        public void AddFor<TMessage>(Func<TMessage, object> replyGenerator)
-        {
-            var messageType = typeof(TMessage);
-            _replyGenerators.AddOrUpdate(messageType, replyGenerator, (t, d) => replyGenerator);
-        }
-
-        public object GenerateReplyTo(object message)
-        {
-            var messageType = message.GetType();
-            Delegate generator;
-            if (!_replyGenerators.TryGetValue(messageType, out generator))
-                return null;
-            return generator.DynamicInvoke(message);
-        }
-
-        public void RemoveFor<TMessage>()
-        {
-            var messageType = typeof(TMessage);
-            Delegate removedGenerator;
-            _replyGenerators.TryRemove(messageType, out removedGenerator);
-        }
-    }
-
-    public enum SubscriberEndpointNotFoundPolicy
+    public enum SubscriberNotFoundPolicy
     {
         Keep,
         Remove
@@ -213,26 +194,6 @@ namespace Messaging
         Requeue,
         SendToErrorQueue,
         Discard
-    }
-
-    internal static class MessageQueueExtensions
-    {
-        public static void SendMessage(this MessageQueue mq, Message message)
-        {
-            if (mq.Transactional)
-            {
-                using (var transaction = new MessageQueueTransaction())
-                {
-                    transaction.Begin();
-                    mq.Send(message, transaction);
-                    transaction.Commit();
-                }
-            }
-            else
-            {
-                mq.Send(message);
-            }
-        }
     }
 
     public sealed class ServiceBus : IServiceBus
@@ -254,6 +215,7 @@ namespace Messaging
             TargetEndpoints = new TargetEndpoints();
             MessageHandlers.Add<StartSubscriptionRequest>(Handle);
             MessageHandlers.Add<EndSubscriptionRequest>(Handle);
+            // TODO: Should it be possible to reject a subscription request?
             //MessageHandlers.Add<SubscriptionStarted>(Handle);
             //MessageHandlers.Add<SubscriptionEnded>(Handle);
             _replyGenerators.AddFor<StartSubscriptionRequest>(r => new SubscriptionStarted(r.Subscription));
@@ -274,7 +236,7 @@ namespace Messaging
 
         //private void Handle(SubscriptionEnded obj) { _subscriptions.Remove(obj.Subscription); }
 
-        public SubscriberEndpointNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
+        public SubscriberNotFoundPolicy SubscriberNotFoundPolicy { get; set; }
 
         public UnhandledMessagesPolicy UnhandledMessagesPolicy { get; set; }
 
@@ -474,7 +436,7 @@ namespace Messaging
                     unreachableSubscribers.Add(subscriber);
                 }
             }
-            if (SubscriberNotFoundPolicy == SubscriberEndpointNotFoundPolicy.Remove)
+            if (SubscriberNotFoundPolicy == SubscriberNotFoundPolicy.Remove)
                 _subscribers.RemoveAll(unreachableSubscribers.Contains);
         }
 
