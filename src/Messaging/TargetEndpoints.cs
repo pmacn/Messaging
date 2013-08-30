@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Concurrent;
 
 namespace Messaging
@@ -26,9 +27,17 @@ namespace Messaging
         {
             BusEndpoint endpoint;
             if (!_endpoints.TryGetValue(messageType, out endpoint))
-                throw new TargetEndpointNotFoundException(); // TODO : Should be a different exception
+            {
+                // TODO : Should be a different exception?
+                throw new TargetEndpointNotFoundException(String.Format("There is no registered endpoint for messages of type {0}", messageType.Name));
+            }
 
             return endpoint;
+        }
+
+        internal BusEndpoint[] For(Type messageType)
+        {
+            return _endpoints.Where(kvp => kvp.Key.IsAssignableFrom(messageType)).Select(kvp => kvp.Value).ToArray();
         }
     }
 }

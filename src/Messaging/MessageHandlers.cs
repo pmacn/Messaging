@@ -56,6 +56,14 @@ namespace Messaging
             }
         }
 
-        internal IEnumerable<IMessageHandler> For(Type messageType) { return _messageHandlers.Where(h => messageType.IsAssignableFrom(h.MessageType)).ToList(); }
+        internal IMessageHandler GetFor(Type messageType)
+        {
+            // should it only get the best fit for the message type?
+            // best fit? closest in the inheritance chain?
+            // how does it affect subscriptions?
+            // how does subscribing to the same message type from two different publishers look?
+            // do I need a priority chain when handling messages?
+            return _messageHandlers.FirstOrDefault(h => h.MessageType.IsAssignableFrom(messageType));
+        }
     }
 }

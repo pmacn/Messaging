@@ -15,7 +15,7 @@ namespace Messaging.Demos
             using (var bus = new ServiceBus("test_queue"))
             {
                 bus.RegisterReplyGenerator<TestMessage>(m => new TestReply(m.Id));
-                bus.MessageHandlers.Add<TestMessage>(m => Console.WriteLine("{0} - {1}", m.Id, m.Timestamp));
+                bus.MessageHandlers.Add<TestMessage>(m => Console.WriteLine("{0} : {1}", m.Timestamp, m.Message));
                 bus.Start();
                 while (!Console.KeyAvailable)
                 {

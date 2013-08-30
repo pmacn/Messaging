@@ -13,4 +13,10 @@ namespace Messaging.Demos
         public DateTime Timestamp { get; set; }
         public string Message { get; set; }
     }
+
+    [Serializable]
+    public class SpecialTestMessage : TestMessage
+    {
+        public int SpecialnessFactor { get; set; }
+    }
 }

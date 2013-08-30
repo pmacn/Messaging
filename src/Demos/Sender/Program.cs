@@ -18,11 +18,11 @@ namespace Messaging.Demos
                 bus.TargetEndpoints.SetFor<TestMessage>(new BusEndpoint("5ZB00R1", "test_queue"));
                 bus.Start();
 
-                string textMessage;
-                while (!String.IsNullOrWhiteSpace(textMessage = Console.ReadLine()))
+                var textMessage = Console.ReadLine();
+                while (!String.IsNullOrWhiteSpace(textMessage))
                 {
-                    bus.Send(new TestMessage { Id = Guid.NewGuid(), Timestamp = DateTime.Now });
-                    Thread.Sleep(1000);
+                    bus.Send(new SpecialTestMessage { Id = Guid.NewGuid(), Timestamp = DateTime.Now, Message = textMessage, SpecialnessFactor = 3 });
+                    textMessage = Console.ReadLine();
                 }
             }
         }

@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Publisher", "Demos\Publishe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Subscriptions", "Demos\Subscribers\Subscriptions.csproj", "{FFA2B5A9-3A11-438A-944E-5B6E22C37B59}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SplitLoad", "Demos\SplitLoad\SplitLoad.csproj", "{0022270E-5350-4566-AD56-FF8F747F22D1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -45,6 +47,10 @@ Global
 		{FFA2B5A9-3A11-438A-944E-5B6E22C37B59}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FFA2B5A9-3A11-438A-944E-5B6E22C37B59}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FFA2B5A9-3A11-438A-944E-5B6E22C37B59}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0022270E-5350-4566-AD56-FF8F747F22D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0022270E-5350-4566-AD56-FF8F747F22D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0022270E-5350-4566-AD56-FF8F747F22D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0022270E-5350-4566-AD56-FF8F747F22D1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -55,5 +61,6 @@ Global
 		{D0E31BF1-4B3F-4051-A0E1-DA4ABA3ACF1C} = {553091A7-FFA3-4E6C-A289-AA7BDCFE3CE4}
 		{E17D90ED-9BD3-4685-AB31-E9DA0C25B7E7} = {553091A7-FFA3-4E6C-A289-AA7BDCFE3CE4}
 		{FFA2B5A9-3A11-438A-944E-5B6E22C37B59} = {553091A7-FFA3-4E6C-A289-AA7BDCFE3CE4}
+		{0022270E-5350-4566-AD56-FF8F747F22D1} = {553091A7-FFA3-4E6C-A289-AA7BDCFE3CE4}
 	EndGlobalSection
 EndGlobal

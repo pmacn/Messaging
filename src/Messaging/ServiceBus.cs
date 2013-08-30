@@ -256,7 +256,8 @@ namespace Messaging
         public void Send(object message)
         {
             var messageType = message.GetType();
-            Send(message, TargetEndpoints.GetFor(messageType));
+            foreach(var endpoint in TargetEndpoints.For(messageType))
+                Send(message, endpoint);
         }
 
         private void Send(object message, BusEndpoint targetEndpoint)
@@ -366,13 +367,11 @@ namespace Messaging
         {
             var message = obj.Body;
             var messageType = message.GetType();
-            var handlers = MessageHandlers.For(messageType);
-            if (!handlers.Any())
+            var handler = MessageHandlers.GetFor(messageType);
+            if (handler == null)
             {
                 switch (UnhandledMessagesPolicy)
                 {
-                    //case UnhandledMessagesPolicy.Discard:
-                    //    break;
                     case UnhandledMessagesPolicy.Requeue:
                         _localQueue.Send(obj);
                         break;
@@ -382,9 +381,11 @@ namespace Messaging
                     default:
                         break;
                 }
+
+                return;
             }
-            foreach (var handler in handlers)
-            {handler.Handle(message);}
+            
+            handler.Handle(message);
             SendReply(obj);
         }
 

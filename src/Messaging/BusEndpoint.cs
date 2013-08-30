@@ -34,10 +34,7 @@ namespace Messaging
 
         public override int GetHashCode()
         {
-            unchecked
-            {
-                return MachineName.GetHashCode() * 31 + QueueName.GetHashCode();
-            }
+            unchecked { return MachineName.GetHashCode() * 31 + QueueName.GetHashCode(); }
         }
 
         public bool Equals(BusEndpoint other)
@@ -51,4 +48,3 @@ namespace Messaging
         public static bool operator !=(BusEndpoint left, BusEndpoint right) { return !Equals(left, right); }
     }
 }
-
