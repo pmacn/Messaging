@@ -13,7 +13,7 @@ namespace Messaging
 
     internal class MessageHandler<TMessage> : IMessageHandler
     {
-        private Action<TMessage> _handler;
+        private readonly Action<TMessage> _handler;
 
         public MessageHandler(Action<TMessage> handler)
         {
@@ -31,13 +31,12 @@ namespace Messaging
 
     public class MessageHandlers
     {
-        private List<IMessageHandler> _messageHandlers = new List<IMessageHandler>();
+        private readonly List<IMessageHandler> _messageHandlers = new List<IMessageHandler>();
 
         internal MessageHandlers() { }
 
         public void Add<TMessage>(Action<TMessage> handler)
         {
-            var messageType = typeof(TMessage);
             // TODO: switch this around so we're not creating an instance if we don't have to
             var messageHandler = new MessageHandler<TMessage>(handler);
             lock (_messageHandlers)
