@@ -288,7 +288,7 @@ namespace Messaging
             if (IsRunning)
                 return;
             IsRunning = true;
-            var queuePath = MsmqEndpointParser.GetLocalQueuePath(LocalEndpoint);
+            var queuePath = MsmqEndpointParser.GetQueuePath(LocalEndpoint);
             _localQueue = GetOrCreateMessageQueue(queuePath);
             _localQueue.Formatter = _messageFormatter;
             StartListening();
@@ -391,7 +391,8 @@ namespace Messaging
 
         private void SendToErrorQueue(Message obj)
         {
-            var errorQueuePath = MsmqEndpointParser.GetErrorQueuePath(LocalEndpoint);
+            var errorsEndpoint = new BusEndpoint(LocalEndpoint.MachineName, LocalEndpoint.QueueName + "_errors");
+            var errorQueuePath = MsmqEndpointParser.GetQueuePath(errorsEndpoint);
             var errorQueue = GetOrCreateMessageQueue(errorQueuePath);
             errorQueue.Send(obj);
             errorQueue.Dispose();
