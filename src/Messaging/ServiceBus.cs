@@ -270,10 +270,10 @@ namespace Messaging
         {
             var queuePath = MsmqEndpointParser.GetQueuePath(targetEndpoint);
             if (!MessageQueue.Exists(queuePath))
-                throw new TargetEndpointNotFoundException("Unable to reach target endpoint " + targetEndpoint.QueueName + "@" + targetEndpoint.MachineName);
+                throw new TargetEndpointNotFoundException(string.Format("Unable to reach target endpoint {0}@{1}", targetEndpoint.QueueName, targetEndpoint.MachineName));
             var remoteQueue = new MessageQueue(queuePath, QueueAccessMode.Send);
             if (!remoteQueue.CanWrite)
-                throw new UnableToSendMessageException("Unable to send message to " + targetEndpoint.QueueName + "@" + targetEndpoint.MachineName);
+                throw new UnableToSendMessageException(string.Format("Unable to send message to {0}@{1}", targetEndpoint.QueueName, targetEndpoint.MachineName));
             remoteQueue.SendMessage(WrapInMsmqMessage(message));
         }
 
@@ -366,6 +366,9 @@ namespace Messaging
                 if (message != null)
                     SendToErrorQueue(message);
             }
+
+            if (message != null)
+                message.Dispose();
             queue.BeginReceive();
         }
 
@@ -379,12 +382,10 @@ namespace Messaging
                 switch (UnhandledMessagesPolicy)
                 {
                     case UnhandledMessagesPolicy.Requeue:
-                        _localQueue.Send(obj);
+                        _localQueue.SendMessage(obj);
                         break;
                     case UnhandledMessagesPolicy.SendToErrorQueue:
                         SendToErrorQueue(obj);
-                        break;
-                    default:
                         break;
                 }
 
@@ -451,7 +452,7 @@ namespace Messaging
         public void SubscribeTo<TMessage>(BusEndpoint publisherEndpoint, Action<TMessage> handler, bool unsubscribeOnStop = true)
             where TMessage : class
         {
-            MessageHandlers.Add<TMessage>(handler);
+            MessageHandlers.Add(handler);
             var subscription = new Subscription(typeof(TMessage), LocalEndpoint, publisherEndpoint, unsubscribeOnStop);
             _subscriptions.Add(subscription);
             Send(new StartSubscriptionRequest(subscription), publisherEndpoint);
