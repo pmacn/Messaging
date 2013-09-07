@@ -1,10 +1,4 @@
-﻿using Messaging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System;
 
 namespace Messaging.Demos
 {
@@ -15,7 +9,7 @@ namespace Messaging.Demos
             using (var bus = new ServiceBus("my_test_queue"))
             {
                 bus.MessageHandlers.Add<TestReply>(r => Console.WriteLine("Got reply to: {0}, Sent on second: {1}", r.ReplyTo, r.SecondSent));
-                bus.TargetEndpoints.SetFor<TestMessage>(new BusEndpoint("5ZB00R1", "test_queue"));
+                bus.TargetEndpoints.SetFor<TestMessage>(new BusEndpoint(".", "test_queue"));
                 bus.Start();
 
                 var textMessage = Console.ReadLine();

@@ -10,15 +10,15 @@ namespace Messaging.Demos
 {
     class Program
     {
-        static BusEndpoint publisherEndpoint = new BusEndpoint("5ZB00R1", "test_queue");
+        static readonly BusEndpoint publisherEndpoint = new BusEndpoint(".", "test_queue");
 
-        static CancellationTokenSource _tokenSource = new CancellationTokenSource();
+        static readonly CancellationTokenSource _tokenSource = new CancellationTokenSource();
 
         static void Main(string[] args)
         {
-            var baseQueueName = "subscriber";
+            const string baseQueueName = "subscriber";
             var tasks = new Task[3];
-            for (int i = 0; i < 3; i++)
+            for (var i = 0; i < 3; i++)
             {
                 var queueName = baseQueueName + i;
                 tasks[i] = Task.Run(() => StartSubscriber(queueName));
