@@ -1,8 +1,4 @@
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Messaging;
 
 namespace Messaging
 {
@@ -15,21 +11,26 @@ namespace Messaging
 
         public BusEndpoint(string machineName, string queueName)
         {
+            if(String.IsNullOrWhiteSpace(queueName)) throw new ArgumentException("queueName");
+
             MachineName = IsLocalhost(machineName) ? Environment.MachineName : machineName;
             QueueName = queueName;
         }
 
-        private static bool IsLocalhost(string machineName) { return String.IsNullOrWhiteSpace(machineName) || machineName.Equals(".", StringComparison.InvariantCultureIgnoreCase) || machineName.Equals("localhost", StringComparison.InvariantCultureIgnoreCase); }
+        private static bool IsLocalhost(string machineName)
+        {
+            return String.IsNullOrWhiteSpace(machineName) ||
+                   machineName.Equals(".", StringComparison.InvariantCultureIgnoreCase) ||
+                   machineName.Equals("localhost", StringComparison.InvariantCultureIgnoreCase);
+        }
 
         public override bool Equals(object obj)
         {
-            if (Object.ReferenceEquals(obj, null))
+            if (ReferenceEquals(obj, null))
                 return false;
-            if (Object.ReferenceEquals(this, obj))
-                return true;
             
             return obj is BusEndpoint &&
-                   this.Equals((BusEndpoint)obj);
+                   Equals((BusEndpoint)obj);
         }
 
         public override int GetHashCode()
@@ -39,8 +40,8 @@ namespace Messaging
 
         public bool Equals(BusEndpoint other)
         {
-            return this.MachineName == other.MachineName &&
-                   this.QueueName == other.QueueName;
+            return MachineName == other.MachineName &&
+                   QueueName == other.QueueName;
         }
 
         public static bool operator ==(BusEndpoint left, BusEndpoint right) { return Equals(left, right); }
