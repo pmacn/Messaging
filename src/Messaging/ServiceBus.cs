@@ -25,8 +25,14 @@ namespace Messaging
         /// </summary>
         bool IsRunning { get; }
 
+        /// <summary>
+        /// Registered message handlers for this bus.
+        /// </summary>
         MessageHandlers MessageHandlers { get; }
 
+        /// <summary>
+        /// Registered target endpoints for this bus
+        /// </summary>
         TargetEndpoints TargetEndpoints { get; }
 
         void RegisterReplyGenerator<TMessage>(Func<TMessage, object> replyGenerator);
@@ -38,7 +44,7 @@ namespace Messaging
         void Send(object message);
 
         /// <summary>
-        /// Starts listening on the local queue
+        /// Starts listening for messages on the local queue
         /// </summary>
         void Start();
 
@@ -48,18 +54,18 @@ namespace Messaging
         void Stop();
 
         /// <summary>
-        /// Publishes a message to all subscribers that have registered for the specific type of message.
+        /// Publishes a message to all subscribers that have registered for messages of this type.
         /// </summary>
-        /// <typeparam name="TMessage"></typeparam>
         /// <param name="message"></param>
         void Publish(object message);
 
         /// <summary>
-        /// Sends a command to the speficied endpoint requesting to receive messages of the specified type.
+        /// Subscribes to messages of type <typeparam name="TMessage"/> published by the specified endpoint.
         /// </summary>
-        /// <typeparam name="TMessage"></typeparam>
-        /// <param name="publisherEndpoint"></param>
-        /// <param name="handler"></param>
+        /// <typeparam name="TMessage">Type of messages to subscribe to</typeparam>
+        /// <param name="publisherEndpoint">Endpoint of the publisher</param>
+        /// <param name="handler">The action that handles received messages from subscription</param>
+        /// <param name="UnsubscribeOnStop">Unsubscribes when stopped if true</param>
         void SubscribeTo<TMessage>(BusEndpoint publisherEndpoint, Action<TMessage> handler, bool UnsubscribeOnStop = true)
             where TMessage : class;
 
